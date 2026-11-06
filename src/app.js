@@ -51,6 +51,7 @@ export function createApp() {
       routes: [
         '/health',
         '/api/auth/login',
+        '/api/auth/google',
         '/api/auth/me',
         '/api/auth/sessions',
         '/api/auth/logout',
@@ -449,9 +450,56 @@ export function createApp() {
     res.json(createAnalyticsSummary(repositories))
   })
 
+  app.post('/api/auth/google', async (req, res) => {
+    const supabaseUrl = process.env.SUPABASE_URL?.trim()
+    const supabaseAnonKey = process.env.SUPABASE_ANON_KEY?.trim()
+    if (!supabaseUrl || !supabaseAnonKey) {
+      return res.status(503).json({ error: 'Google sign-in is not configured on the server (missing SUPABASE_URL / SUPABASE_ANON_KEY).' })
+    }
+    const accessToken = String(req.body?.accessToken || '')
+    if (!accessToken) return res.status(400).json({ error: 'accessToken is required' })
+
+    let supabaseUser
+    try {
+      const response = await fetch(`${supabaseUrl.replace(/\/$/, '')}/auth/v1/user`, {
+        headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${accessToken}` },
+      })
+      if (!response.ok) return res.status(401).json({ error: 'Google session is invalid or expired' })
+      supabaseUser = await response.json()
+    } catch {
+      return res.status(502).json({ error: 'Could not verify Google session' })
+    }
+    if (!supabaseUser?.id || !supabaseUser?.email) return res.status(401).json({ error: 'Google session is missing an email' })
+
+    const name = supabaseUser.user_metadata?.full_name || supabaseUser.user_metadata?.name || supabaseUser.email.split('@')[0]
+    const users = repositories.all('users')
+    let user = users.find((item) => item.authProvider === 'google' && item.externalId === supabaseUser.id)
+    if (!user) {
+      user = repositories.save('users', {
+        id: `cust-g-${supabaseUser.id}`,
+        email: supabaseUser.email,
+        role: 'customer',
+        shopId: null,
+        name,
+        authProvider: 'google',
+        externalId: supabaseUser.id,
+        createdAt: new Date().toISOString(),
+      })
+    } else if (user.email !== supabaseUser.email || user.name !== name) {
+      user = repositories.patch('users', user.id, { email: supabaseUser.email, name }) || user
+    }
+
+    const session = auth.issueToken(user)
+    res.json({ token: session.token, session, user })
+  })
+
   app.post('/api/auth/login', (req, res) => {
     const { email, role = 'owner' } = req.body
-    const matchedUser = repositories.all('users').find((user) => user.email === email) || repositories.save('users', {
+    const existingUser = repositories.all('users').find((user) => user.email === email)
+    if (existingUser?.authProvider === 'google') {
+      return res.status(403).json({ error: 'This account signs in with Google.' })
+    }
+    const matchedUser = existingUser || repositories.save('users', {
       id: `${role}-${Date.now()}`,
       email,
       role,

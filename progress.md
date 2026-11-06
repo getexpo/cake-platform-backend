@@ -137,3 +137,9 @@
 - Verified the isolation path on fresh ports `4160` and `4162`: parallel authenticated design writes passed `40/40` when each instance used its own store file (`data/db-4160.json`, `data/db-4162.json`).
 - Re-ran full `verify-integration.js` against isolated instance `4160`, and it passed end to end, including reset, login, design create/list, reorder, owner queue/detail/status, pickup completion, notifications, and pickup-slot patch.
 - Re-verified the same current contract again on isolated port `4164` after the frontend owner-panel pass, confirming the dedicated pickup-completion route still returns the expected `picked_up` state, `fulfillmentSnapshot.decisionState = pickup_completed`, notification chain, and pickup-slot patch behavior needed by the updated frontend.
+
+## 2026-11-06 - Google customer sign-in exchange (Claude)
+- Added `POST /api/auth/google` in `src/app.js`: verifies a Supabase access token against `${SUPABASE_URL}/auth/v1/user`, finds/creates a `customer` user (`authProvider: 'google'`, `externalId` = Supabase user id), issues a normal backend session token.
+- `/api/auth/login` now returns 403 for Google-linked accounts so the demo login can't impersonate them.
+- Requires env vars on Render: `SUPABASE_URL`, `SUPABASE_ANON_KEY`. `package.json` engines set to node >=18 (global fetch).
+- Verified locally against a mock Supabase: bad token 401, good token creates one user, repeat login reuses it, /me + /profile + /orders/me scoped to the new user, logout revokes, hijack attempt 403.
